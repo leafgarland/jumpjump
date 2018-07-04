@@ -1,0 +1,12 @@
+[package]
+name = "jumpjump"
+version = "0.1.0"
+authors = ["Leaf Garland <leafgarland@users.noreply.github.com>"]
+
+[dependencies]
+failure = "0.1.1"
+url = "1.7.0"
+
+[dependencies.rusqlite]
+version = "0.13.0"
+features = ["bundled"]
