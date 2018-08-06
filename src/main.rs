@@ -67,10 +67,11 @@ impl Database {
     pub fn add_location<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
         let a_path = canonicalize_path(path.as_ref())?;
         self.connection.execute(
-            // can use this with sqlite 3.24+
-            // "insert into jump_location(location, rank) values(?, 1) on conflict(location) do update set rank=rank+1",
-            "with new(location) as (values(?)) insert or replace into jump_location(id, location, rank)
-             select old.id, new.location, (coalesce(old.rank + 1, 1)) as rank from new left join jump_location old on old.location = new.location",
+            // use this with sqlite >= 3.24
+            "insert into jump_location(location, rank) values(?, 1) on conflict(location) do update set rank=rank+1",
+            // use this with sqlite < 3.24
+            // "with new(location) as (values(?)) insert or replace into jump_location(id, location, rank)
+            //  select old.id, new.location, (coalesce(old.rank + 1, 1)) as rank from new left join jump_location old on old.location = new.location",
             &[&a_path]
         )?;
         Ok(())
