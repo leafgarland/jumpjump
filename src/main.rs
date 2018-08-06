@@ -34,7 +34,6 @@ fn ensure_tables(dbc: &Connection) -> Result<(), Error> {
 }
 
 fn canonicalize_path<P: AsRef<Path>>(path: P) -> Result<String, Error> {
-    // let canonical = path.as_ref().canonicalize()?;
     let canonical = PathArc::new(path.as_ref()).absolute()?;
     if cfg!(target_os = "windows") {
         let url = Url::from_file_path(&canonical).map_err(|_| format_err!("Failed to build url"))?;
@@ -59,20 +58,10 @@ impl Database {
         Ok(Database { connection })
     }
 
-    // pub fn clear(&self) -> Result<(), Error> {
-    //     self.connection.execute("delete from jump_location", &[])?;
-    //     Ok(())
-    // }
-
-    pub fn add_location<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
-        let a_path = canonicalize_path(path.as_ref())?;
+    pub fn add_location<S: AsRef<str>>(&self, location: S) -> Result<(), Error> {
         self.connection.execute(
-            // use this with sqlite >= 3.24
             "insert into jump_location(location, rank) values(?, 1) on conflict(location) do update set rank=rank+1",
-            // use this with sqlite < 3.24
-            // "with new(location) as (values(?)) insert or replace into jump_location(id, location, rank)
-            //  select old.id, new.location, (coalesce(old.rank + 1, 1)) as rank from new left join jump_location old on old.location = new.location",
-            &[&a_path]
+            &[&location.as_ref()]
         )?;
         Ok(())
     }
@@ -92,9 +81,7 @@ impl Database {
     }
 
     pub fn get_matching_locations(&self, patterns: &[&str]) -> Result<Vec<String>, Error> {
-        let mut pattern = join(patterns, "*");
-        pattern.insert(0, '*');
-        pattern.push('*');
+        let pattern = format!("*{}*", join(patterns, "*"));
         let mut stmt = self.connection.prepare_cached(
             "select location from jump_location where location glob ? order by rank desc",
         )?;
@@ -125,12 +112,18 @@ fn report_best_location(db: &Database, patterns: &[&str]) -> Result<(), Error> {
     Ok(())
 }
 
+fn add_path<P: AsRef<Path>>(db: &Database, path: P) -> Result<(), Error> {
+    let abs_path = canonicalize_path(path.as_ref())?;
+    db.add_location(abs_path)?;
+    Ok(())
+}
+
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
 
     let db = Database::new(Option::Some(get_database_path()?))?;
     match args.iter().map(|s| s.as_ref()).collect::<Vec<&str>>()[1..] {
-        ["add", location] => db.add_location(location)?,
+        ["add", location] => add_path(&db, location)?,
         ["get"] => report_all_locations(&db)?,
         ref largs if largs[0] == "get" => report_best_location(&db, &largs[1..])?,
         _ => println!("Failed to parse arguments"),
@@ -143,40 +136,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn foo() {
+    fn most_visited_location_is_first() {
         let db = Database::new(Option::None).unwrap();
 
-        db.add_location("/dev/tools").unwrap();
-        db.add_location("/dev/tools").unwrap();
-        db.add_location("/dev/tools/vim").unwrap();
-        db.add_location("/dev/tools/vim").unwrap();
-        db.add_location("/dev/tools/vim").unwrap();
+        db.add_location("foo").unwrap();
+        db.add_location("foo").unwrap();
+        db.add_location("bar").unwrap();
+        db.add_location("bar").unwrap();
+        db.add_location("bar").unwrap();
 
         let locations: Vec<String> = db.get_locations().unwrap();
 
-        assert_eq!(locations[..], ["C:/dev/tools/vim", "C:/dev/tools"]);
+        assert_eq!(locations[..], ["bar", "foo"]);
     }
 
     #[test]
-    fn get() {
+    fn finds_by_multiple_substr() {
         let db = Database::new(Option::None).unwrap();
 
-        db.add_location("/dev/tools").unwrap();
-        db.add_location("/dev/tools/vim").unwrap();
+        db.add_location("/foo/bar").unwrap();
+        db.add_location("/foo/doo").unwrap();
+        db.add_location("/foo/bar/doo").unwrap();
 
-        let locations: Vec<String> = db.get_matching_locations(&["vim"]).unwrap();
+        let locations: Vec<String> = db.get_matching_locations(&["bar", "doo"]).unwrap();
 
-        assert_eq!(locations[..], ["C:/dev/tools/vim"]);
+        assert_eq!(locations[..], ["/foo/bar/doo"]);
     }
 
     #[test]
-    fn non_existing_path() {
+    fn finds_by_single_substr() {
         let db = Database::new(Option::None).unwrap();
 
-        db.add_location("foo/bar/doolally").unwrap();
+        db.add_location("/foo/bar").unwrap();
+        db.add_location("/foo/bar/doo").unwrap();
 
-        let locations: Vec<String> = db.get_locations().unwrap();
+        let locations: Vec<String> = db.get_matching_locations(&["doo"]).unwrap();
 
-        assert_eq!(locations[..], ["C:/dev/me/jumpjump/foo/bar/doolally"]);
+        assert_eq!(locations[..], ["/foo/bar/doo"]);
     }
 }
