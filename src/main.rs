@@ -4,9 +4,10 @@ extern crate failure;
 extern crate itertools;
 extern crate url;
 extern crate path_abs;
+extern crate dirs;
 
 use failure::Error;
-use rusqlite::{version, Connection};
+use rusqlite::{version, Connection, NO_PARAMS};
 use std::env;
 use std::path::{Path, PathBuf};
 use path_abs::PathArc;
@@ -19,7 +20,7 @@ struct Database {
 }
 
 fn get_database_path() -> Result<PathBuf, Error> {
-    if let Some(mut home) = std::env::home_dir() {
+    if let Some(mut home) = dirs::home_dir() {
         home.push(".jumpjump");
         Ok(home)
     } else {
@@ -29,7 +30,7 @@ fn get_database_path() -> Result<PathBuf, Error> {
 
 fn ensure_tables(dbc: &Connection) -> Result<(), Error> {
     dbc.execute("create table if not exists jump_location (id INTEGER PRIMARY KEY ASC, location STRING UNIQUE, rank INTEGER);
-                 create index if not exists location_index on jump_location(location)", &[])?;
+                 create index if not exists location_index on jump_location(location)", NO_PARAMS)?;
     Ok(())
 }
 
@@ -70,7 +71,7 @@ impl Database {
         let mut stmt = self
             .connection
             .prepare("select location from jump_location order by rank desc")?;
-        let results_iter = stmt.query_map(&[], |row| row.get(0))?;
+        let results_iter = stmt.query_map(NO_PARAMS, |row| row.get(0))?;
 
         let mut locations = Vec::new();
         for r in results_iter {

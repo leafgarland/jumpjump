@@ -8,8 +8,8 @@ failure = "0.1.1"
 url = "1.7.0"
 itertools = "0.7.8"
 path_abs = "0.4.1"
+dirs = "1.0.4"
 
 [dependencies.rusqlite]
-version = "0.13.0"
+version = "0.15.0"
 features = ["bundled"]
-git = "https://github.com/jgallagher/rusqlite"
