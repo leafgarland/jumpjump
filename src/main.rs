@@ -5,6 +5,7 @@ extern crate itertools;
 extern crate url;
 extern crate path_abs;
 extern crate dirs;
+extern crate regex;
 
 use failure::Error;
 use rusqlite::{version, Connection, NO_PARAMS};
@@ -12,6 +13,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 use path_abs::PathArc;
 use url::Url;
+use regex::Regex;
+use std::collections::HashMap;
 
 use itertools::join;
 
@@ -29,8 +32,32 @@ fn get_database_path() -> Result<PathBuf, Error> {
 }
 
 fn ensure_tables(dbc: &Connection) -> Result<(), Error> {
-    dbc.execute("create table if not exists jump_location (id INTEGER PRIMARY KEY ASC, location STRING UNIQUE, rank INTEGER);
-                 create index if not exists location_index on jump_location(location)", NO_PARAMS)?;
+	dbc.execute("create table if not exists jump_location (id INTEGER PRIMARY KEY ASC, location STRING UNIQUE, rank INTEGER);
+				 create index if not exists location_index on jump_location(location)", NO_PARAMS)?;
+    add_regexp_function(dbc)?;
+	Ok(())
+}
+
+fn add_regexp_function(db: &Connection) -> Result<(), Error> {
+	let mut cached_regexes = HashMap::new();
+	db.create_scalar_function("regexp", 2, true, move |ctx| {
+		let regex_s = ctx.get::<String>(0)?;
+		let entry = cached_regexes.entry(regex_s.clone());
+		let regex = {
+			use std::collections::hash_map::Entry::{Occupied, Vacant};
+			match entry {
+				Occupied(occ) => occ.into_mut(),
+				Vacant(vac) => match Regex::new(&regex_s) {
+					Ok(r) => vac.insert(r),
+					Err(err) => return Err(rusqlite::Error::UserFunctionError(Box::new(err))),
+				},
+			}
+		};
+
+		let text = ctx.get::<String>(1)?;
+		Ok(regex.is_match(&text))
+	})?;
+
     Ok(())
 }
 
@@ -49,13 +76,10 @@ fn canonicalize_path<P: AsRef<Path>>(path: P) -> Result<String, Error> {
 }
 
 impl Database {
-    pub fn new(path: Option<PathBuf>) -> Result<Database, Error> {
-        let connection = match path {
-            Some(path) => Connection::open(path)?,
-            None => Connection::open_in_memory()?,
-        };
+    pub fn new(connection: Connection) -> Result<Database, Error> {
         println!("db version is {}", version());
         ensure_tables(&connection)?;
+        add_regexp_function(&connection)?;
         Ok(Database { connection })
     }
 
@@ -121,8 +145,10 @@ fn add_path<P: AsRef<Path>>(db: &Database, path: P) -> Result<(), Error> {
 
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
+    let db_path = get_database_path()?;
+    let connection = Connection::open(db_path)?;
+    let db = Database::new(connection)?;
 
-    let db = Database::new(Option::Some(get_database_path()?))?;
     match args.iter().map(|s| s.as_ref()).collect::<Vec<&str>>()[1..] {
         ["add", location] => add_path(&db, location)?,
         ["get"] => report_all_locations(&db)?,
@@ -138,7 +164,7 @@ mod tests {
 
     #[test]
     fn most_visited_location_is_first() {
-        let db = Database::new(Option::None).unwrap();
+        let db = Database::new(Connection::open_in_memory().unwrap()).unwrap();
 
         db.add_location("foo").unwrap();
         db.add_location("foo").unwrap();
@@ -153,7 +179,7 @@ mod tests {
 
     #[test]
     fn finds_by_multiple_substr() {
-        let db = Database::new(Option::None).unwrap();
+        let db = Database::new(Connection::open_in_memory().unwrap()).unwrap();
 
         db.add_location("/foo/bar").unwrap();
         db.add_location("/foo/doo").unwrap();
@@ -166,7 +192,7 @@ mod tests {
 
     #[test]
     fn finds_by_single_substr() {
-        let db = Database::new(Option::None).unwrap();
+        let db = Database::new(Connection::open_in_memory().unwrap()).unwrap();
 
         db.add_location("/foo/bar").unwrap();
         db.add_location("/foo/bar/doo").unwrap();

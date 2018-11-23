@@ -9,7 +9,8 @@ url = "1.7.0"
 itertools = "0.7.8"
 path_abs = "0.4.1"
 dirs = "1.0.4"
+regex = "1.0.6"
 
 [dependencies.rusqlite]
 version = "0.15.0"
-features = ["bundled"]
+features = ["bundled","functions"]
