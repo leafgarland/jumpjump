@@ -1,4 +1,5 @@
 extern crate rusqlite;
+extern crate clap;
 #[macro_use(format_err)]
 extern crate failure;
 extern crate dirs;
@@ -12,7 +13,6 @@ use path_abs::PathArc;
 use regex::Regex;
 use rusqlite::{Connection, NO_PARAMS};
 use std::collections::HashMap;
-use std::env;
 use std::path::{Path, PathBuf};
 use url::Url;
 
@@ -105,7 +105,10 @@ impl Database {
 		Ok(locations)
 	}
 
-	pub fn get_matching_locations(&self, patterns: &[&str]) -> Result<Vec<String>, Error> {
+	pub fn get_matching_locations<I>(&self, patterns: I) -> Result<Vec<String>, Error> 
+		where I: IntoIterator,
+			  I::Item: std::fmt::Display,
+	{
 		let pattern = format!("(?i).*{}.*", join(patterns, ".*"));
 		let mut stmt = self.connection.prepare_cached(
 			"select location from jump_location where regexp(?, location) order by rank desc",
@@ -129,7 +132,10 @@ fn report_all_locations(db: &Database) -> Result<(), Error> {
 	Ok(())
 }
 
-fn report_best_location(db: &Database, patterns: &[&str]) -> Result<(), Error> {
+fn report_best_location<I>(db: &Database, patterns: I) -> Result<(), Error>
+	where I: IntoIterator,
+		  I::Item: std::fmt::Display,
+{
 	let locations = db.get_matching_locations(patterns)?;
 	if let Some(location) = locations.first() {
 		println!("{}", location);
@@ -144,17 +150,43 @@ fn add_path<P: AsRef<Path>>(db: &Database, path: P) -> Result<(), Error> {
 }
 
 fn main() -> Result<(), Error> {
-	let args: Vec<String> = env::args().collect();
-	let db_path = get_database_path()?;
+
+	let matches = clap::App::new("jumpjump")
+		.version("0.1")
+		.author("Leaf Garland")
+		.about("Jump around, jump around, jump up, jump up, and get down.")
+		.arg(clap::Arg::with_name("file")
+			.short("f")
+			.help("Use given db file instead of default"))
+		.subcommand(clap::SubCommand::with_name("add")
+			.about("add location to db")
+			.arg(clap::Arg::with_name("location")
+				.required(true)
+				.index(1)))
+		.subcommand(clap::SubCommand::with_name("get")
+			.about("get recent location from db")
+			.arg(clap::Arg::with_name("pattern")
+				.multiple(true)
+				.index(1)))
+		.get_matches();
+
+	let default_path = get_database_path()?;
+	let default_path_str = default_path.to_string_lossy();
+	let db_path = matches.value_of("file").unwrap_or(&default_path_str);
 	let connection = Connection::open(db_path)?;
 	let db = Database::new(connection)?;
 
-	match args.iter().map(|s| s.as_ref()).collect::<Vec<&str>>()[1..] {
-		["add", location] => add_path(&db, location)?,
-		["get"] => report_all_locations(&db)?,
-		ref largs if largs[0] == "get" => report_best_location(&db, &largs[1..])?,
-		_ => println!("Failed to parse arguments"),
-	};
+	if let Some(matches) = matches.subcommand_matches("add") {
+		let location = matches.value_of("location").unwrap();
+		add_path(&db, location)?;
+	} else if let Some(matches) = matches.subcommand_matches("get") {
+		if let Some(patterns) = matches.values_of_lossy("pattern") {
+			report_best_location(&db, patterns)?;
+		} else {
+			report_all_locations(&db)?;
+		}
+	}
+
 	Ok(())
 }
 
