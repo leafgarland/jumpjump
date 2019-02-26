@@ -57,7 +57,12 @@ fn migrate(dbc: &Connection) -> Result<(), Error> {
         match migration_version {
             0 => migrate_version_1(dbc)?,
             1 => migrate_version_2(dbc)?,
-            unknown_version  => return Err(format_err!("Unrecognized database version {}", unknown_version)),
+            unknown_version => {
+                return Err(format_err!(
+                    "Unrecognized database version {}",
+                    unknown_version
+                ));
+            }
         };
     }
 }
@@ -73,7 +78,7 @@ fn migrate_version_1(dbc: &Connection) -> Result<(), Error> {
 
         commit;
         ")?;
-        Ok(())
+    Ok(())
 }
 
 fn migrate_version_2(dbc: &Connection) -> Result<(), Error> {
@@ -93,7 +98,7 @@ fn migrate_version_2(dbc: &Connection) -> Result<(), Error> {
 
         commit;
         ")?;
-        Ok(())
+    Ok(())
 }
 
 fn add_regexp_function(db: &Connection) -> Result<(), Error> {
@@ -218,15 +223,18 @@ fn main() -> Result<(), Error> {
             clap::Arg::with_name("file")
                 .short("f")
                 .help("Use given db file instead of default"),
-        ).subcommand(
+        )
+        .subcommand(
             clap::SubCommand::with_name("add")
                 .about("add location to db")
                 .arg(clap::Arg::with_name("location").required(true).index(1)),
-        ).subcommand(
+        )
+        .subcommand(
             clap::SubCommand::with_name("get")
                 .about("get recent location from db")
                 .arg(clap::Arg::with_name("pattern").multiple(true).index(1)),
-        ).get_matches();
+        )
+        .get_matches();
 
     let default_path = get_database_path()?;
     let default_path_str = default_path.to_string_lossy();
