@@ -213,7 +213,7 @@ fn main() -> Result<(), Error> {
     let matches = clap::App::new("jumpjump")
         .version("0.1")
         .author("Leaf Garland")
-        .about("Jump around, jump around, jump up, jump up, and get down.")
+        .about("Jump around! Jump around! Jump up, jump up and get down!")
         .arg(
             clap::Arg::with_name("file")
                 .short("f")
