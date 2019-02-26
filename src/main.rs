@@ -18,6 +18,8 @@ use url::Url;
 
 use itertools::join;
 
+static CURRENT_MIGRATION_VERSION: i32 = 2;
+
 struct Database {
     connection: Connection,
 }
@@ -32,10 +34,66 @@ fn get_database_path() -> Result<PathBuf, Error> {
 }
 
 fn ensure_tables(dbc: &Connection) -> Result<(), Error> {
-    dbc.execute("create table if not exists jump_location (id INTEGER PRIMARY KEY ASC, location STRING UNIQUE, rank INTEGER);
-                 create index if not exists location_index on jump_location(location)", NO_PARAMS)?;
-    add_regexp_function(dbc)?;
-    Ok(())
+    migrate(dbc)?;
+    add_regexp_function(dbc)
+}
+
+fn migrate(dbc: &Connection) -> Result<(), Error> {
+    dbc.execute("create table if not exists migration_version (id INTEGER PRIMARY KEY ASC, version INTEGER);", NO_PARAMS)?;
+
+    loop {
+        let mut stmt = dbc.prepare("select version from migration_version where id = 1 limit 1")?;
+        let mut results_iter = stmt.query_map(NO_PARAMS, |row| row.get(0))?;
+        let migration_version = match results_iter.next() {
+            None => 0,
+            Some(Ok(version)) => version,
+            Some(Err(err)) => return Err(format_err!("Failed to get database version: {}", err)),
+        };
+
+        if migration_version == CURRENT_MIGRATION_VERSION {
+            return Ok(());
+        }
+
+        match migration_version {
+            0 => migrate_version_1(dbc)?,
+            1 => migrate_version_2(dbc)?,
+            unknown_version  => return Err(format_err!("Unrecognized database version {}", unknown_version)),
+        };
+    }
+}
+
+fn migrate_version_1(dbc: &Connection) -> Result<(), Error> {
+    dbc.execute_batch("
+        begin transaction;
+
+        create table if not exists jump_location (id INTEGER PRIMARY KEY ASC, location STRING UNIQUE, rank INTEGER);
+        create index if not exists location_index on jump_location(location);
+
+        insert into migration_version(version) values (1);
+
+        commit;
+        ")?;
+        Ok(())
+}
+
+fn migrate_version_2(dbc: &Connection) -> Result<(), Error> {
+    dbc.execute_batch("
+        begin transaction;
+
+        drop table if exists temp_jump_location;
+        alter table jump_location rename to temp_jump_location;
+
+        create table jump_location (id INTEGER PRIMARY KEY ASC, location STRING UNIQUE COLLATE NOCASE, rank INTEGER);
+        create index if not exists location_index on jump_location(location);
+
+        insert or ignore into jump_location
+            select id, location, rank from temp_jump_location;
+
+        update migration_version set version = 2 where id = 1;
+
+        commit;
+        ")?;
+        Ok(())
 }
 
 fn add_regexp_function(db: &Connection) -> Result<(), Error> {
