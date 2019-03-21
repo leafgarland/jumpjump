@@ -2,6 +2,7 @@
 name = "jumpjump"
 version = "0.1.0"
 authors = ["Leaf Garland <leafgarland@users.noreply.github.com>"]
+edition = "2018"
 
 [dependencies]
 failure = "0.1.1"

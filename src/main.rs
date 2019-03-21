@@ -1,12 +1,12 @@
-extern crate clap;
-extern crate rusqlite;
+use clap;
+use rusqlite;
 #[macro_use(format_err)]
 extern crate failure;
-extern crate dirs;
-extern crate itertools;
-extern crate path_abs;
-extern crate regex;
-extern crate url;
+use dirs;
+
+
+
+
 
 use failure::Error;
 use path_abs::PathArc;
