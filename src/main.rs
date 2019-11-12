@@ -4,12 +4,8 @@ use rusqlite;
 extern crate failure;
 use dirs;
 
-
-
-
-
 use failure::Error;
-use path_abs::PathArc;
+use path_abs::PathAbs;
 use regex::Regex;
 use rusqlite::{Connection, NO_PARAMS};
 use std::collections::HashMap;
@@ -125,10 +121,10 @@ fn add_regexp_function(db: &Connection) -> Result<(), Error> {
 }
 
 fn canonicalize_path<P: AsRef<Path>>(path: P) -> Result<String, Error> {
-    let canonical = PathArc::new(path.as_ref()).absolute()?;
+    let canonical = PathAbs::new(path.as_ref())?;
     if cfg!(target_os = "windows") {
         let url =
-            Url::from_file_path(&canonical).map_err(|_| format_err!("Failed to build url"))?;
+            Url::from_file_path(canonical).map_err(|_| format_err!("Failed to build url"))?;
         let path = url
             .to_file_path()
             .map_err(|_| format_err!("Failed to build url"))?;
@@ -136,7 +132,7 @@ fn canonicalize_path<P: AsRef<Path>>(path: P) -> Result<String, Error> {
         let fs = cow.replace('\\', "/");
         return Ok(fs);
     }
-    Ok(canonical.to_string_lossy().to_string())
+    Ok(canonical.as_path().to_string_lossy().to_string())
 }
 
 impl Database {
