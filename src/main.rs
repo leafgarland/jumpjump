@@ -10,7 +10,6 @@ use regex::Regex;
 use rusqlite::{Connection, NO_PARAMS};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use url::Url;
 
 use itertools::join;
 
@@ -122,16 +121,6 @@ fn add_regexp_function(db: &Connection) -> Result<(), Error> {
 
 fn canonicalize_path<P: AsRef<Path>>(path: P) -> Result<String, Error> {
     let canonical = PathAbs::new(path.as_ref())?;
-    if cfg!(target_os = "windows") {
-        let url =
-            Url::from_file_path(canonical).map_err(|_| format_err!("Failed to build url"))?;
-        let path = url
-            .to_file_path()
-            .map_err(|_| format_err!("Failed to build url"))?;
-        let cow = path.to_string_lossy();
-        let fs = cow.replace('\\', "/");
-        return Ok(fs);
-    }
     Ok(canonical.as_path().to_string_lossy().to_string())
 }
 
