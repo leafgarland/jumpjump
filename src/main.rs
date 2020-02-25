@@ -37,12 +37,14 @@ fn migrate(dbc: &Connection) -> Result<(), Error> {
     dbc.execute("create table if not exists migration_version (id INTEGER PRIMARY KEY ASC, version INTEGER);", NO_PARAMS)?;
 
     loop {
-        let mut stmt = dbc.prepare("select version from migration_version where id = 1 limit 1")?;
-        let mut results_iter = stmt.query_map(NO_PARAMS, |row| row.get(0))?;
-        let migration_version = match results_iter.next() {
-            None => 0,
-            Some(Ok(version)) => version,
-            Some(Err(err)) => return Err(format_err!("Failed to get database version: {}", err)),
+        let migration_version = {
+            let mut stmt = dbc.prepare("select version from migration_version where id = 1 limit 1")?;
+            let mut results_iter = stmt.query_map(NO_PARAMS, |row| row.get(0))?;
+            match results_iter.next() {
+                None => 0,
+                Some(Ok(version)) => version,
+                Some(Err(err)) => return Err(format_err!("Failed to get database version: {}", err)),
+            }
         };
 
         if migration_version == CURRENT_MIGRATION_VERSION {
