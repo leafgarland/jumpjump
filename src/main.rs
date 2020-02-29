@@ -1,10 +1,11 @@
 use clap;
 use rusqlite;
-#[macro_use(format_err)]
-extern crate failure;
 use dirs;
 
-use failure::Error;
+#[macro_use(anyhow)]
+extern crate anyhow;
+
+use anyhow::Error;
 use path_abs::PathAbs;
 use regex::Regex;
 use rusqlite::{Connection, NO_PARAMS};
@@ -62,7 +63,7 @@ fn get_database_path() -> Result<PathBuf, Error> {
         home.push(".jumpjump");
         Ok(home)
     } else {
-        Err(format_err!("Could not find home_dir to store jumpjump db"))
+        Err(anyhow!("Could not find home_dir to store jumpjump db"))
     }
 }
 
@@ -83,7 +84,7 @@ fn migrate(dbc: &Connection, desired_version: usize) -> Result<(), Error> {
                 None => 0,
                 Some(Ok(version)) => version as usize,
                 Some(Err(err)) => {
-                    return Err(format_err!("Failed to get database version: {}", err))
+                    return Err(anyhow!("Failed to get database version: {}", err))
                 }
             }
         };
@@ -93,7 +94,7 @@ fn migrate(dbc: &Connection, desired_version: usize) -> Result<(), Error> {
         }
 
         if migration_version > MIGRATIONS.len() {
-            return Err(format_err!(
+            return Err(anyhow!(
                 "Unrecognized database version {}",
                 migration_version
             ));
