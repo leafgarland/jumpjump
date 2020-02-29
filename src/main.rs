@@ -171,13 +171,38 @@ impl Database {
             .query_map(&[&pattern], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
 
+        Ok(locations)
+    }
+
+    pub fn get_all_locations(&self) -> Result<Vec<String>, Error> {
+        let mut stmt = self
+            .connection
+            .prepare("select location, rank, lastAccess from jump_location order by rank desc, lastAccess desc")?;
+        let locations = stmt
+            .query_map(NO_PARAMS, |row| {
+                Ok(format!(
+                    "{} {} {}",
+                    row.get::<_, String>(0)?,
+                    row.get::<_, u32>(1)?,
+                    row.get::<_, String>(2)?
+                ))
+            })?
+            .collect::<Result<Vec<String>, _>>()?;
 
         Ok(locations)
     }
 }
 
-fn report_all_locations(db: &Database) -> Result<(), Error> {
+fn report_locations(db: &Database) -> Result<(), Error> {
     let locations = db.get_locations()?;
+    for l in locations.iter() {
+        println!("{}", l);
+    }
+    Ok(())
+}
+
+fn report_all_locations(db: &Database) -> Result<(), Error> {
+    let locations = db.get_all_locations()?;
     for l in locations.iter() {
         println!("{}", l);
     }
@@ -222,6 +247,10 @@ fn main() -> Result<(), Error> {
                 .about("get recent location from db")
                 .arg(clap::Arg::with_name("pattern").multiple(true).index(1)),
         )
+        .subcommand(
+            clap::SubCommand::with_name("show")
+                .about("show all db entries"),
+        )
         .get_matches();
 
     let default_path = get_database_path()?;
@@ -230,15 +259,22 @@ fn main() -> Result<(), Error> {
     let connection = Connection::open(db_path)?;
     let db = Database::new(connection)?;
 
-    if let Some(matches) = matches.subcommand_matches("add") {
-        let location = matches.value_of("location").unwrap();
-        add_path(&db, location)?;
-    } else if let Some(matches) = matches.subcommand_matches("get") {
-        if let Some(patterns) = matches.values_of_lossy("pattern") {
-            report_best_location(&db, patterns)?;
-        } else {
+    match matches.subcommand() {
+        ("add", Some(matches)) => {
+            let location = matches.value_of("location").unwrap();
+            add_path(&db, location)?;
+        },
+        ("get", Some(matches)) => {
+            if let Some(patterns) = matches.values_of_lossy("pattern") {
+                report_best_location(&db, patterns)?;
+            } else {
+                report_locations(&db)?;
+            }
+        },
+        ("show", _) => {
             report_all_locations(&db)?;
-        }
+        },
+        _ => (),
     }
 
     Ok(())
