@@ -13,7 +13,45 @@ use std::path::{Path, PathBuf};
 
 use itertools::join;
 
-static CURRENT_MIGRATION_VERSION: i32 = 2;
+const MIGRATIONS: [&str; 3] = [
+    "
+        begin transaction;
+
+        create table if not exists jump_location (id INTEGER PRIMARY KEY ASC, location STRING UNIQUE, rank INTEGER);
+        create index if not exists location_index on jump_location(location);
+
+        insert into migration_version(version) values (1);
+
+        commit;
+    ",
+    "
+        begin transaction;
+
+        drop table if exists temp_jump_location;
+        alter table jump_location rename to temp_jump_location;
+
+        create table jump_location (id INTEGER PRIMARY KEY ASC, location STRING UNIQUE COLLATE NOCASE, rank INTEGER);
+        create index if not exists location_index on jump_location(location);
+
+        insert or ignore into jump_location
+            select id, location, rank from temp_jump_location;
+
+        update migration_version set version = 2 where id = 1;
+
+        commit;
+    ",
+    "
+        begin transaction;
+
+        alter table jump_location add column lastAccess TEXT;
+
+        update jump_location set lastAccess = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime');
+
+        update migration_version set version = 3 where id = 1;
+
+        commit;
+    ",
+];
 
 struct Database {
     connection: Connection,
@@ -29,73 +67,40 @@ fn get_database_path() -> Result<PathBuf, Error> {
 }
 
 fn ensure_tables(dbc: &Connection) -> Result<(), Error> {
-    migrate(dbc)?;
+    migrate(dbc, MIGRATIONS.len())?;
     add_regexp_function(dbc)
 }
 
-fn migrate(dbc: &Connection) -> Result<(), Error> {
+fn migrate(dbc: &Connection, desired_version: usize) -> Result<(), Error> {
     dbc.execute("create table if not exists migration_version (id INTEGER PRIMARY KEY ASC, version INTEGER);", NO_PARAMS)?;
 
     loop {
-        let migration_version = {
-            let mut stmt = dbc.prepare("select version from migration_version where id = 1 limit 1")?;
-            let mut results_iter = stmt.query_map(NO_PARAMS, |row| row.get(0))?;
+        let migration_version: usize = {
+            let mut stmt =
+                dbc.prepare("select version from migration_version where id = 1 limit 1")?;
+            let mut results_iter = stmt.query_map(NO_PARAMS, |row| row.get::<_, u32>(0))?;
             match results_iter.next() {
                 None => 0,
-                Some(Ok(version)) => version,
-                Some(Err(err)) => return Err(format_err!("Failed to get database version: {}", err)),
+                Some(Ok(version)) => version as usize,
+                Some(Err(err)) => {
+                    return Err(format_err!("Failed to get database version: {}", err))
+                }
             }
         };
 
-        if migration_version == CURRENT_MIGRATION_VERSION {
+        if migration_version == desired_version {
             return Ok(());
         }
 
-        match migration_version {
-            0 => migrate_version_1(dbc)?,
-            1 => migrate_version_2(dbc)?,
-            unknown_version => {
-                return Err(format_err!(
-                    "Unrecognized database version {}",
-                    unknown_version
-                ));
-            }
-        };
+        if migration_version > MIGRATIONS.len() {
+            return Err(format_err!(
+                "Unrecognized database version {}",
+                migration_version
+            ));
+        }
+
+        dbc.execute_batch(MIGRATIONS[migration_version as usize])?;
     }
-}
-
-fn migrate_version_1(dbc: &Connection) -> Result<(), Error> {
-    dbc.execute_batch("
-        begin transaction;
-
-        create table if not exists jump_location (id INTEGER PRIMARY KEY ASC, location STRING UNIQUE, rank INTEGER);
-        create index if not exists location_index on jump_location(location);
-
-        insert into migration_version(version) values (1);
-
-        commit;
-        ")?;
-    Ok(())
-}
-
-fn migrate_version_2(dbc: &Connection) -> Result<(), Error> {
-    dbc.execute_batch("
-        begin transaction;
-
-        drop table if exists temp_jump_location;
-        alter table jump_location rename to temp_jump_location;
-
-        create table jump_location (id INTEGER PRIMARY KEY ASC, location STRING UNIQUE COLLATE NOCASE, rank INTEGER);
-        create index if not exists location_index on jump_location(location);
-
-        insert or ignore into jump_location
-            select id, location, rank from temp_jump_location;
-
-        update migration_version set version = 2 where id = 1;
-
-        commit;
-        ")?;
-    Ok(())
 }
 
 fn add_regexp_function(db: &Connection) -> Result<(), Error> {
@@ -135,7 +140,8 @@ impl Database {
 
     pub fn add_location<S: AsRef<str>>(&self, location: S) -> Result<(), Error> {
         self.connection.execute(
-            "insert into jump_location(location, rank) values(?, 1) on conflict(location) do update set rank=rank+1",
+            "insert into jump_location(location, rank, lastAccess) values(?, 1, strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime')) \
+             on conflict(location) do update set rank=rank+1, lastAccess=strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime')",
             &[&location.as_ref()]
         )?;
         Ok(())
@@ -144,13 +150,10 @@ impl Database {
     pub fn get_locations(&self) -> Result<Vec<String>, Error> {
         let mut stmt = self
             .connection
-            .prepare("select location from jump_location order by rank desc")?;
-        let results_iter = stmt.query_map(NO_PARAMS, |row| row.get(0))?;
-
-        let mut locations = Vec::new();
-        for r in results_iter {
-            locations.push(r?);
-        }
+            .prepare("select location from jump_location order by rank desc, lastAccess desc")?;
+        let locations = stmt
+            .query_map(NO_PARAMS, |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(locations)
     }
@@ -162,14 +165,12 @@ impl Database {
     {
         let pattern = format!("(?i).*{}.*", join(patterns, ".*"));
         let mut stmt = self.connection.prepare_cached(
-            "select location from jump_location where regexp(?, location) order by rank desc",
+            "select location from jump_location where regexp(?, location) order by rank desc, lastAccess desc",
         )?;
-        let results_iter = stmt.query_map(&[&pattern], |row| row.get(0))?;
+        let locations = stmt
+            .query_map(&[&pattern], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
 
-        let mut locations = Vec::new();
-        for r in results_iter {
-            locations.push(r?);
-        }
 
         Ok(locations)
     }
